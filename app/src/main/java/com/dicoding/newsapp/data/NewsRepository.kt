@@ -1,101 +1,69 @@
 package com.dicoding.newsapp.data
 
+import android.util.Log
 import androidx.lifecycle.LiveData
-import androidx.lifecycle.MediatorLiveData
+import androidx.lifecycle.liveData
+import androidx.lifecycle.map
 import com.dicoding.newsapp.BuildConfig
 import com.dicoding.newsapp.data.local.entity.NewsEntity
 import com.dicoding.newsapp.data.local.room.NewsDao
-import com.dicoding.newsapp.data.remote.response.NewsResponse
 import com.dicoding.newsapp.data.remote.retrofit.ApiService
 import com.dicoding.newsapp.utils.AppExecutors
-import retrofit2.Callback
-import retrofit2.Call
-import retrofit2.Response
 
 
-/**
- * Repository untuk mengelola data berita.
- * Mengambil data dari API dan database lokal.
- */
+
+// Repository untuk mengelola data berita
 class NewsRepository private constructor(
     private val apiService: ApiService,
     private val newsDao: NewsDao,
     private val appExecutors: AppExecutors
 ) {
-    private val result = MediatorLiveData<Result<List<NewsEntity>>>()
-
-    /**
-     * Mengambil berita utama dari API dan database lokal.
-     * @return LiveData yang berisi hasil dari operasi pengambilan berita.
-     */
-    fun getHeadlineNews(): LiveData<Result<List<NewsEntity>>> {
-        result.value = Result.Loading
-        val client = apiService.getNews(BuildConfig.API_KEY)
-
-        // Memanggil API untuk mendapatkan berita
-        client.enqueue(object : Callback<NewsResponse> {
-            override fun onResponse(call: Call<NewsResponse>, response: Response<NewsResponse>) {
-                if (response.isSuccessful) {
-                    val articles = response.body()?.articles
-                    val newsList = ArrayList<NewsEntity>()
-
-                    // Menyimpan data berita ke database lokal
-                    appExecutors.diskIO.execute {
-                        articles?.forEach { article ->
-                            val isBookmarked = newsDao.isNewsBookmarked(article.title)
-                            val news = NewsEntity(
-                                article.title,
-                                article.publishedAt,
-                                article.urlToImage,
-                                article.url,
-                                isBookmarked
-                            )
-                            newsList.add(news)
-                        }
-                        newsDao.deleteAll()
-                        newsDao.insertNews(newsList)
-                    }
-                }
+    // Mendapatkan berita utama dari API dan menyimpannya ke database lokal
+    fun getHeadlineNews(): LiveData<Result<List<NewsEntity>>> = liveData {
+        emit(Result.Loading) // Emit status loading
+        try {
+            // Memanggil API untuk mendapatkan berita
+            val response = apiService.getNews(BuildConfig.API_KEY)
+            val articles = response.articles
+            // Memetakan artikel dari API ke entitas berita lokal
+            val newsList = articles.map { article ->
+                val isBookmarked = newsDao.isNewsBookmarked(article.title)
+                NewsEntity(
+                    article.title,
+                    article.publishedAt,
+                    article.urlToImage,
+                    article.url,
+                    isBookmarked
+                )
             }
-
-            override fun onFailure(call: Call<NewsResponse>, t: Throwable) {
-                result.value = Result.Error(t.message.toString())
-            }
-        })
-
-
-
-        // Mengambil data berita dari database lokal
-        val localData = newsDao.getNews()
-        result.addSource(localData) { newData: List<NewsEntity> ->
-            result.value = Result.Success(newData)
+            // Menghapus semua berita lama dan menyimpan berita baru ke database lokal
+            newsDao.deleteAll()
+            newsDao.insertNews(newsList)
+        } catch (e: Exception) {
+            Log.d("NewsRepository", "getHeadlineNews: ${e.message.toString()} ")
+            emit(Result.Error(e.message.toString())) // Emit status error
         }
-        return result
-
+        // Mengambil data berita dari database lokal dan emit sebagai hasil sukses
+        val localData: LiveData<Result<List<NewsEntity>>> = newsDao.getNews().map { Result.Success(it) }
+        emitSource(localData)
     }
 
+    // Mendapatkan berita yang di-bookmark dari database lokal
     fun getBookmarkedNews(): LiveData<List<NewsEntity>> {
         return newsDao.getBookmarkedNews()
     }
 
-    fun setBookmarkedNews(news: NewsEntity, bookmarkState: Boolean) {
-        appExecutors.diskIO.execute {
-            news.isBookmarked = bookmarkState
-            newsDao.updateNews(news)
-        }
+    // Mengatur status bookmark untuk berita tertentu
+    suspend fun setNewsBookmark(news: NewsEntity, bookmarkState: Boolean) {
+        news.isBookmarked = bookmarkState
+        newsDao.updateNews(news)
     }
 
     companion object {
         @Volatile
         private var instance: NewsRepository? = null
 
-        /**
-         * Mendapatkan instance dari NewsRepository.
-         * @param apiService Layanan API untuk mengambil data berita.
-         * @param newsDao DAO untuk mengelola database lokal.
-         * @param appExecutors Eksekutor untuk menjalankan tugas di thread yang berbeda.
-         * @return Instance dari NewsRepository.
-         */
+        // Mendapatkan instance singleton dari NewsRepository
         fun getInstance(
             apiService: ApiService,
             newsDao: NewsDao,

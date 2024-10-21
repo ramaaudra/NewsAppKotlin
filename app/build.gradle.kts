@@ -49,6 +49,10 @@ dependencies {
     implementation(libs.androidx.constraintlayout)
     implementation(libs.androidx.recyclerview)
 
+    implementation(libs.androidx.lifecycle.viewmodel.ktx) //viewModelScope
+    implementation(libs.androidx.lifecycle.livedata.ktx) //liveData
+    implementation(libs.androidx.room.ktx)
+
     implementation(libs.glide)
     implementation(libs.androidx.viewpager2)
     implementation(libs.androidx.fragment.ktx)
